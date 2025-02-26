@@ -4,8 +4,7 @@ namespace WebSocketService.Infrastructure
 {
     public interface IMessageRepository
     {
-        void SaveMessage(Message message);
-        List<Message> GetRecentMessages(DateTime fromTime);
-        Message GetRandomMessage();
+        Task SaveMessageAsync(Message message);
+        Task <List<Message>> GetRecentMessagesAsync(DateTime fromTime);
     }
 }
