@@ -9,32 +9,59 @@ namespace WebSocketService.Controllers
     public class MessagesController : ControllerBase
     {
         private readonly IMessageService _messageService;
+        private readonly ILogger<MessagesController> _logger;
 
-        public MessagesController(IMessageService messageService)
+        public MessagesController(IMessageService messageService, ILogger<MessagesController> logger)
         {
             _messageService = messageService;
+            _logger = logger;
         }
 
         [HttpPost("send")]
-        public IActionResult SendMessage([FromBody] MessageDto message)
+        public async Task<IActionResult> SendMessage([FromBody] MessageDto message, CancellationToken cancellation)
         {
-            _messageService.SendMessage(message);
-            return Ok();
+            if (!ModelState.IsValid)
+            {
+                _logger.LogWarning("Invalid message data received.");
+                return BadRequest(ModelState);
+            }
+
+            try
+            {
+                _logger.LogInformation("Sending message: {Message}", message);
+                await _messageService.SendMessageAsync(message, cancellation);
+                _logger.LogInformation("Message sent successfully.");
+                return StatusCode(201);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending message.");
+                return StatusCode(500, "Internal server error: " + ex.Message);
+            }
         }
 
         [HttpGet("history")]
-        public IActionResult GetRecentMessages()
+        public async Task<IActionResult> GetRecentMessages(CancellationToken cancellation)
         {
-            var messages = _messageService.GetRecentMessages();
-            return Ok(messages);
-        }
+            try
+            {
+                _logger.LogInformation("Fetching recent messages.");
+                var messages = await _messageService.GetRecentMessagesAsync(cancellation);
 
-        [HttpGet("randomMessage")]
-        public IActionResult GetRandomMessage()
-        {
-            var message = _messageService.GetRandomMessage();
-            return Ok(message);
+                if (messages == null || !messages.Any())
+                {
+                    _logger.LogInformation("No messages found.");
+                    return NoContent();
+                }
+
+                _logger.LogInformation("Recent messages fetched successfully.");
+                return Ok(messages);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching recent messages.");
+                return StatusCode(500, "Internal server error: " + ex.Message);
+            }
         }
     }
-
 }
