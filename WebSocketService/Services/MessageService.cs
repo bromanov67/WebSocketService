@@ -1,5 +1,8 @@
-﻿using WebSocketService.Infrastructure;
-//using WebSocketService.Cache;
+﻿using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
+using System.Text.Json;
+using WebSocketService.Cache;
+using WebSocketService.Infrastructure;
 using WebSocketService.Models;
 
 namespace WebSocketService.Services
@@ -7,57 +10,77 @@ namespace WebSocketService.Services
     public class MessageService : IMessageService
     {
         private readonly IMessageRepository _repository;
-        //private readonly ICacheService _cacheService;
+        private readonly ICacheService _cacheService;
+        private readonly IHubContext<MessageHub> _hubContext;
+        private readonly ILogger<MessageService> _logger;
 
-        public MessageService(IMessageRepository repository /*,ICacheService cacheService*/)
+        public MessageService(
+            IMessageRepository repository,
+            ICacheService cacheService,
+            IHubContext<MessageHub> hubContext,
+            ILogger<MessageService> logger)
         {
             _repository = repository;
-            //_cacheService = cacheService;
+            _cacheService = cacheService;
+            _hubContext = hubContext;
+            _logger = logger;
         }
 
-        public void SendMessage(MessageDto messageDto)
+        public async Task SendMessageAsync(MessageDto messageDto, CancellationToken cancellation)
         {
-            // Создание нового сообщения с текущей меткой времени
             var message = new Message
             {
+                Id = Guid.NewGuid(),
                 Text = messageDto.Text,
-                CreadtedAt = DateTime.UtcNow,
+                CreatedAt = DateTime.UtcNow,
                 OrderNumber = messageDto.OrderNumber
             };
 
-            // Сохранение сообщения в базу данных
-            _repository.SaveMessage(message);
-
-            // Кэширование сообщения в Redis
-            //_cacheService.SetCachedMessageAsync(message.Id, message.Text).Wait();
-        }
-
-        public List<Message> GetRecentMessages()
-        {
-            var fromTime = DateTime.UtcNow.AddMinutes(-10);
-            var messages = _repository.GetRecentMessages(fromTime);
-
-            var cachedMessages = new List<Message>();
-            foreach (var message in messages)
+            try
             {
-                //var cachedMessage = _cacheService.GetCachedMessageAsync(message.Id).Result;
-                //if (!string.IsNullOrEmpty(cachedMessage))
-                //{
-                //    cachedMessages.Add(new Message { Id = message.Id, Text = cachedMessage, CreadtedAt = message.CreatedAt, OrderNumber = message.OrderNumber });
-                //}
-                //else
-                //{
-                //    cachedMessages.Add(message);
-                //}
-                cachedMessages.Add(message);
-
+                await _repository.SaveMessageAsync(message);
+                await _cacheService.SetCacheAsync(message.Id, message);
+                await _hubContext.Clients.All.SendAsync("ReceiveMessage", message);
+                _logger.LogInformation("Message {MessageId} processed successfully", message.Id);
             }
-            return cachedMessages;
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing message {MessageId}", message.Id);
+                throw;
+            }
         }
 
-        public Message GetRandomMessage()
+        public async Task<List<Message>> GetRecentMessagesAsync(CancellationToken cancellation)
         {
-            return _repository.GetRandomMessage();
+            _logger.LogInformation("Getting recent messages");
+
+            try
+            {
+                var fromTime = DateTime.UtcNow.AddMinutes(-10);
+                var messages = await _repository.GetRecentMessagesAsync(fromTime);
+                _logger.LogDebug("Found {Count} messages in database", messages.Count);
+
+                var cachedMessages = new List<Message>();
+                foreach (var message in messages)
+                {
+                    try
+                    {
+                        var cachedMessage = await _cacheService.GetCacheAsync<Message>(message.Id);
+                        cachedMessages.Add(cachedMessage ?? message);
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogWarning(ex, "Cache deserialization error for message {MessageId}", message.Id);
+                        cachedMessages.Add(message);
+                    }
+                }
+                return cachedMessages;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving messages");
+                throw;
+            }
         }
     }
 }

@@ -4,8 +4,7 @@ namespace WebSocketService.Services
 {
     public interface IMessageService
     {
-        void SendMessage(MessageDto message);
-        List<Message> GetRecentMessages();
-        Message GetRandomMessage();
+        Task SendMessageAsync(MessageDto message, CancellationToken cancellation);
+        Task <List<Message>> GetRecentMessagesAsync(CancellationToken cancellation);
     }
 }
